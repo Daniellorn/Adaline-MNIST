@@ -1,6 +1,7 @@
 package main
 
 import "core:encoding/endian"
+import "core:encoding/csv"
 import "core:fmt"
 import "core:os"
 import "core:math/rand"
@@ -121,31 +122,40 @@ DotProduct :: proc(weights: []f32, input: []f32) -> f32
     return simd.reduce_add_ordered(sumVec)
 }
 
-Train :: proc(adalineUnit: ^Adaline, trainData: ^MnistData, iterations: int) -> f32 // tu trzeba zwracac tablice error na kazdej iteracji 
+Train :: proc(adalineUnit: ^Adaline, trainData: ^MnistData, epochs: int)
 {
-    totalError: f32 = 0
+    errorPerEpoch := make([]f32, epochs)
     
-    for i := 0; i < iterations; i+=1
+    for i := 0; i < epochs; i+=1
     {
-        randomIdx := rand.int_range(0, int(trainData.imageHeader.count))
-
-        pixels := GetImage(trainData, randomIdx)
-        target : f32 = 1.0 if int(trainData.labels[randomIdx]) == adalineUnit.label else -1.0
-
-        o: f32 = DotProduct(adalineUnit.weights[1:], pixels) + adalineUnit.weights[0]
-
-        diff := target - o
-        error := adalineUnit.eta * diff
-        totalError += error
-
-        for j := 0; j < len(adalineUnit.weights) - 1; j+=1
+        totalError: f32 = 0
+        for j := 0; j < int(trainData.imageHeader.count); j+=1
         {
-            adalineUnit.weights[j + 1] += error * pixels[j]
+            randomIdx := rand.int_range(0, int(trainData.imageHeader.count))
+    
+            pixels := GetImage(trainData, randomIdx)
+            target : f32 = 1.0 if int(trainData.labels[randomIdx]) == adalineUnit.label else -1.0
+    
+            o: f32 = DotProduct(adalineUnit.weights[1:], pixels) + adalineUnit.weights[0]
+    
+            diff := target - o
+            error := adalineUnit.eta * diff
+            totalError += diff * diff
+    
+            for k := 0; k < len(adalineUnit.weights) - 1; k+=1
+            {
+                adalineUnit.weights[k + 1] += error * pixels[k]
+            }
+            adalineUnit.weights[0] += adalineUnit.eta * (target - o) //bo wejscie = 1
         }
-        adalineUnit.weights[0] += adalineUnit.eta * (target - o) //bo wejscie = 1
+
+        errorPerEpoch[i] = totalError
     }
 
-    return totalError / f32(iterations) * 100
+    filename := fmt.tprintf("Bledy_%d.txt", adalineUnit.label)
+    SaveToCSV(filename, errorPerEpoch)
+
+    fmt.print("Done\n")
 }
 
 Classify :: proc(units: ^[10]Adaline, pixels: []f32) -> int
@@ -188,9 +198,33 @@ testModel :: proc(units: ^[10]Adaline, testData: ^MnistData)
     }
 
     accuracy := f32(hit) / f32(total) * 100.0
-    fmt.printfln("Accuracy: %.2f%%", accuracy)
+    fmt.printfln("Accuracy: %.2f%%", 100.0 - accuracy)
 }
 
+SaveToCSV :: proc(filename: string, errors: []f32) {
+
+    fd, _ := os.open(filename, os.O_WRONLY | os.O_CREATE | os.O_TRUNC)
+    defer os.close(fd)
+
+    w := os.to_writer(fd)
+
+    writer: csv.Writer
+
+    csv.writer_init(&writer, w)
+
+    csv.write(&writer, []string{"Epoch", "Error Value"})
+
+    for e, i in errors 
+    {
+
+        epoch_str := fmt.tprintf("%d", i)
+        error_str := fmt.tprintf("%.2f", e)
+        
+        record := []string{epoch_str, error_str}
+        csv.write(&writer, record)
+    }
+    csv.writer_flush(&writer)
+}
 
 main :: proc()
 {
@@ -221,9 +255,7 @@ main :: proc()
 
     for i := 0; i < 10; i+=1
     {
-        totalError := Train(&adalineUnits[i], &trainData, 10000)
-
-        fmt.printfln("Jednostka nr %d blad = %f", i, totalError)
+        Train(&adalineUnits[i], &trainData, 15)
     }
 
 
@@ -234,5 +266,4 @@ main :: proc()
     delete(trainData.labels)
     delete(testData.images)
     delete(testData.labels)
-    
 }
